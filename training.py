@@ -158,7 +158,7 @@ for _,data in test_data.iterrows():
     user_id = data["uid"]
     known_similarity = torch.cosine_similarity(F.normalize(user_known_embeddings[user_id], p=2, dim=0),F.normalize(question_embeddings[data["question_id"]], p=2, dim=0), dim=0)
     unknown_similarity = torch.cosine_similarity(F.normalize(user_unknown_embeddings[user_id],p=2, dim=0), F.normalize(question_embeddings[data["question_id"]], p=2, dim=0), dim=0)
-    final_result.append((user_id, (known_similarity-unknown_similarity)))
+    final_result.append((user_id, (known_similarity-unknown_similarity).item()))
 
 """
 output_list = []
