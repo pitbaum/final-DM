@@ -38,7 +38,8 @@ if not os.path.exists(os.getcwd()+"/question_embeddings.pt"):
 
     print("question embeddings dont exist yet, creating them")
     # Load the sentence transformer model
-    model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+    
+    model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2') # Make sure to use a model that knows chinese
     model.eval()
     questions_list = []
     for i in tqdm(range(len(questions))):
