@@ -39,7 +39,7 @@ if not os.path.exists(os.getcwd()+"/question_embeddings.pt"):
     print("question embeddings dont exist yet, creating them")
     # Load the sentence transformer model
     
-    model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2') # Make sure to use a model that knows chinese
+    model = SentenceTransformer('shibing624/text2vec-base-chinese') # Make sure to use a model that knows chinese
     model.eval()
     questions_list = []
     for i in tqdm(range(len(questions))):
@@ -127,7 +127,7 @@ if not os.path.exists(os.getcwd() + "/known_user_embeddings.pt"):
         for question_id in user_known_question_dict[uid]:
             looked_up_question_embeddings.append(question_embeddings[question_id])
         if looked_up_question_embeddings == []:
-            user_embedding = torch.stack([torch.tensor(0.0) for _ in range(384)])
+            user_embedding = torch.stack([torch.tensor(0.0) for _ in range(768)])
         else:
             user_embedding = torch.mean(torch.stack(looked_up_question_embeddings),dim=0)
         user_known_embeddings[uid] = user_embedding
@@ -141,7 +141,7 @@ if not os.path.exists(os.getcwd() + "/known_user_embeddings.pt"):
         for question_id in user_unknown_question_dict[uid]:
             looked_up_question_embeddings.append(question_embeddings[question_id])
         if looked_up_question_embeddings == []:
-            user_embedding = torch.stack([torch.tensor(0.0) for _ in range(384)])
+            user_embedding = torch.stack([torch.tensor(0.0) for _ in range(768)])
         else:
             user_embedding = torch.mean(torch.stack(looked_up_question_embeddings),dim=0)
         user_unknown_embeddings[uid] = user_embedding
