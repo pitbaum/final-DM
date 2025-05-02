@@ -4,6 +4,7 @@ from tqdm import tqdm
 from sentence_transformers import SentenceTransformer
 import torch
 import os
+import torch.nn.functional as F
 
 """
     Load data
@@ -131,10 +132,11 @@ for uid in user_unknown_question_dict.keys:
 final_result = []
 for data in test_data:
     user_id = data["uid"] 
-    known_similarity = torch.cosine_similarity(user_known_embeddings[user_id],question_embeddings[data["question_id"]],dim=0)
-    unknown_similarity = torch.cosine_similarity(user_unknown_question_dict[user_id], question_embeddings[data["question_id"]],dim=0)
+    known_similarity = torch.cosine_similarity(F.normalize(user_known_embeddings[user_id]),F.normalize(question_embeddings[data["question_id"]]),dim=0)
+    unknown_similarity = torch.cosine_similarity(F.normalize(user_unknown_question_dict[user_id]), F.normalize(question_embeddings[data["question_id"]]),dim=0)
     final_result.append(user_id, (known_similarity-unknown_similarity))
 
+"""
 output_list = []
 # Create an output guess by if the user has correctly solved such a concept before
 for _, test in tqdm(test_data.iterrows(),total=len(test_data), desc="Creating Test file"):
@@ -149,11 +151,10 @@ for _, test in tqdm(test_data.iterrows(),total=len(test_data), desc="Creating Te
 
     # Aggregate the final submission
     output_list.append((test["uid"],known_concepts))
-
+"""
+    
 columns = ["uid","response"]
-results = pd.DataFrame(output_list, columns=columns)
+results = pd.DataFrame(final_result, columns=columns)
 results.to_csv("output.csv", index=False)
-
-
 
 print("Finished task, wrote results to output.csv")
