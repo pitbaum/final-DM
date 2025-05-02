@@ -44,13 +44,16 @@ if not os.path.exists("/question_embeddings.pt"):
     for i in tqdm(range(len(questions))):
         question = questions[str(i)]
         content = question["content"]
-        kc_routes = question["kc_routes"]
-        answer = question["answer"]  # Fixed: use correct field instead of repeating kc_routes
+        kc_routes = ""
+        for x in question["kc_routes"]:
+            kc_routes += x
+        answer = ""
+        for x in question["answer"]:
+            answer += x  # Fixed: use correct field instead of repeating kc_routes
         analysis = question["analysis"]
         q_type = question["type"]
-
         # Combine all fields into a single string
-        questions_list.append(content + kc_routes + answer + analysis + q_type)
+        questions_list.append(content + answer + analysis + q_type)
 
     batch_size = 32
     embeddings = []
