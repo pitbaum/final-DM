@@ -34,7 +34,7 @@ all_concepts = list(concepts.keys())
     Create question embeddings
 """
 
-if not os.path.exists("/question_embeddings.pt"):
+if not os.path.exists(os.getcwd()+"/question_embeddings.pt"):
 
     print("question embeddings dont exist yet, creating them")
     # Load the sentence transformer model
@@ -83,6 +83,7 @@ else:
 """
     Generate user known concept dict
 """
+"""
 # Create the dictionary with users as keys and concept dictionaries as values
 user_dict = {user: {concept: 0 for concept in all_concepts} for user in all_users}
 
@@ -97,47 +98,67 @@ for _, training in tqdm(train_df.iterrows(), total=len(train_df), desc="Evaluati
         else:
             score = 1
         user_dict[training["uid"]][concept] += score 
-
+"""
 """
     Generate a user question embedding
 """
-# Create a user_id key, list of known question ids dict
-# And one for questions that were anwsered wrongly
-user_known_question_dict = {user: [] for user in all_users}
-user_unknown_question_dict = {user: [] for user in all_users}
-for _, training_data in tqdm(train_df.iterrows(), total=len(train_df), desc="Create user embeddings"):
-    # Append the question to the known dict if the response was correct
-    if train_data["response"] == 1:
-        user_known_question_dict[train_data["uid"]].append(train_data["question_id"])
-    else:
-        user_unknown_question_dict[train_data["uid"]].apppend(train_data["question_id"])
 
-# Create user embeddings tuple list (user id, user embedding)
-user_known_embeddings = []
-for uid in user_known_question_dict.keys:
-    looked_up_question_embeddings = []
-    for question_id in user_known_question_dict[uid]:
-        looked_up_question_embeddings.append(question_embeddings[question_id])
-    user_embedding = torch.mean(torch.stack(looked_up_question_embeddings))
-    user_known_embeddings.append((uid, user_embedding))
+if not os.path.exists(os.getcwd() + "/known_user_embeddings.pt"):
+    # Create a user_id key, list of known question ids dict
+    # And one for questions that were anwsered wrongly
+    user_known_question_dict = {user: [] for user in all_users}
+    user_unknown_question_dict = {user: [] for user in all_users}
+    for _, training_data in tqdm(train_df.iterrows(), total=len(train_df), desc="Create user embeddings"):
+        # Append the question to the known dict if the response was correct
+        if training_data["response"] == 1:
+            user_known_question_dict[training_data["uid"]].append(training_data["question_id"])
+        else:
+            user_unknown_question_dict[training_data["uid"]].append(training_data["question_id"])
 
-# Create user embedding for questions that were wrongly anwsered
-user_unknown_embeddings = []
-for uid in user_unknown_question_dict.keys:
-    looked_up_question_embeddings = []
-    for question_id in user_unknown_question_dict[uid]:
-        looked_up_question_embeddings.append(question_embeddings[question_id])
-    user_embedding = torch.mean(torch.stack(looked_up_question_embeddings))
-    user_unknown_embeddings.append((uid, user_embedding))
+    torch.save(user_known_question_dict, "known_user_embeddings.pt")
+
+    torch.save(user_unknown_question_dict, "unknown_user_embeddings.pt")
+
+    # Create user embeddings tuple list (user id, user embedding)
+    user_known_embeddings = {user: [] for user in all_users}
+    for uid in user_known_question_dict.keys():
+        looked_up_question_embeddings = []
+        for question_id in user_known_question_dict[uid]:
+            looked_up_question_embeddings.append(question_embeddings[question_id])
+        if looked_up_question_embeddings == []:
+            user_embedding = torch.stack([torch.tensor(0.0) for _ in range(384)])
+        else:
+            user_embedding = torch.mean(torch.stack(looked_up_question_embeddings),dim=0)
+        user_known_embeddings[uid] = user_embedding
+
+    torch.save(user_known_embeddings, "known_user_embeddings.pt")
+
+    # Create user embedding for questions that were wrongly anwsered
+    user_unknown_embeddings = {user: [] for user in all_users}
+    for uid in user_unknown_question_dict.keys():
+        looked_up_question_embeddings = []
+        for question_id in user_unknown_question_dict[uid]:
+            looked_up_question_embeddings.append(question_embeddings[question_id])
+        if looked_up_question_embeddings == []:
+            user_embedding = torch.stack([torch.tensor(0.0) for _ in range(384)])
+        else:
+            user_embedding = torch.mean(torch.stack(looked_up_question_embeddings),dim=0)
+        user_unknown_embeddings[uid] = user_embedding
+
+    torch.save(user_unknown_embeddings, "unknown_user_embeddings.pt")
+
+else:
+    user_known_embeddings = torch.load("known_user_embeddings.pt")
+    user_unknown_embeddings = torch.load("unknown_user_embeddings.pt")
 
 # Get the similarity of the test question and the known user embedding and the unknown user embedding
 # The final result will then be (known similarity - unknown similarity)
 final_result = []
-for data in test_data:
-    user_id = data["uid"] 
-    known_similarity = torch.cosine_similarity(F.normalize(user_known_embeddings[user_id]),F.normalize(question_embeddings[data["question_id"]]),dim=0)
-    unknown_similarity = torch.cosine_similarity(F.normalize(user_unknown_question_dict[user_id]), F.normalize(question_embeddings[data["question_id"]]),dim=0)
-    final_result.append(user_id, (known_similarity-unknown_similarity))
+for _,data in test_data.iterrows():
+    user_id = data["uid"]
+    known_similarity = torch.cosine_similarity(F.normalize(user_known_embeddings[user_id], p=2, dim=0),F.normalize(question_embeddings[data["question_id"]], p=2, dim=0), dim=0)
+    unknown_similarity = torch.cosine_similarity(F.normalize(user_unknown_embeddings[user_id],p=2, dim=0), F.normalize(question_embeddings[data["question_id"]], p=2, dim=0), dim=0)
+    final_result.append((user_id, (known_similarity-unknown_similarity)))
 
 """
 output_list = []
