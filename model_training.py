@@ -45,25 +45,25 @@ class RecommenderModel(nn.Module):
     def __init__(self, input_dim):
         super(RecommenderModel, self).__init__()
         
-        # First hidden layer (input size is 756)
+        # First hidden layer (input size is 756 * 3)
         self.fc1 = nn.Linear(input_dim, 2048)  # Increased size for larger input
         self.bn1 = nn.BatchNorm1d(2048)
-        self.dropout1 = nn.Dropout(0.4)
+        self.dropout1 = nn.Dropout(0.3)
 
         # Second hidden layer
         self.fc2 = nn.Linear(2048, 1024)
         self.bn2 = nn.BatchNorm1d(1024)
-        self.dropout2 = nn.Dropout(0.4)
+        self.dropout2 = nn.Dropout(0.3)
 
         # Third hidden layer
         self.fc3 = nn.Linear(1024, 512)
         self.bn3 = nn.BatchNorm1d(512)
-        self.dropout3 = nn.Dropout(0.3)
+        self.dropout3 = nn.Dropout(0.2)
 
         # Fourth hidden layer
         self.fc4 = nn.Linear(512, 256)
         self.bn4 = nn.BatchNorm1d(256)
-        self.dropout4 = nn.Dropout(0.3)
+        self.dropout4 = nn.Dropout(0.2)
 
         # Fifth hidden layer
         self.fc5 = nn.Linear(256, 128)
@@ -112,7 +112,7 @@ if linear:
     model.train()
 
     BATCH_SIZE = 32
-    epochs = 3
+    epochs = 10
 
     for epoch in range(epochs):
         model.train()

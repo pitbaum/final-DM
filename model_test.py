@@ -46,22 +46,22 @@ class RecommenderModel(nn.Module):
         # First hidden layer (input size is 756)
         self.fc1 = nn.Linear(input_dim, 2048)  # Increased size for larger input
         self.bn1 = nn.BatchNorm1d(2048)
-        self.dropout1 = nn.Dropout(0.4)
+        self.dropout1 = nn.Dropout(0.3)
 
         # Second hidden layer
         self.fc2 = nn.Linear(2048, 1024)
         self.bn2 = nn.BatchNorm1d(1024)
-        self.dropout2 = nn.Dropout(0.4)
+        self.dropout2 = nn.Dropout(0.3)
 
         # Third hidden layer
         self.fc3 = nn.Linear(1024, 512)
         self.bn3 = nn.BatchNorm1d(512)
-        self.dropout3 = nn.Dropout(0.3)
+        self.dropout3 = nn.Dropout(0.2)
 
         # Fourth hidden layer
         self.fc4 = nn.Linear(512, 256)
         self.bn4 = nn.BatchNorm1d(256)
-        self.dropout4 = nn.Dropout(0.3)
+        self.dropout4 = nn.Dropout(0.2)
 
         # Fifth hidden layer
         self.fc5 = nn.Linear(256, 128)
@@ -115,8 +115,6 @@ if linear:
     for _, behavior in tqdm(test_data.iterrows(), total=len(test_data), desc=f"Calculating predictions"):
         user_id = behavior["uid"]
         question_id = behavior["question_id"]
-        predictions = []
-        
 
         if user_id not in user_known_embeddings.keys():
             this_known_embedding = torch.zeros(user_known_embeddings_length, dtype=torch.float32)
@@ -128,11 +126,9 @@ if linear:
         this_unknown_embedding = user_unknown_embeddings[user_id]
         this_question = question_embeddings[question_id]
         input_tensor = torch.cat((this_known_embedding, this_unknown_embedding,this_question), dim=0)
-            
-        output = model(input_tensor)
-        predictions.append((user_id,torch.sigmoid(output).detach().cpu().item()))
+        output = model(input_tensor.unsqueeze(0))
 
-        results.append(predictions)
+        results.append((user_id, torch.sigmoid(output).detach().cpu().item()))
 
     print("Results calculated for all users.")
 
