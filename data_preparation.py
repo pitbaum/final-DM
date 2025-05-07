@@ -182,6 +182,8 @@ if (not os.path.exists(os.getcwd() + "/known_user_concept_embeddings.pt")) or (n
             user_known_concept_dict[train_data["uid"]].append(train_data["concept_id"])
         else:
             user_unknown_concept_dict[train_data["uid"]].append(train_data["concept_id"])
+    
+    # Kown concepts
     # Create user embeddings tuple list (user id, user concept embedding)
     user_known_concept_embeddings = {user: [] for user in all_users}
     for uid in user_known_concept_dict.keys():
@@ -199,6 +201,7 @@ if (not os.path.exists(os.getcwd() + "/known_user_concept_embeddings.pt")) or (n
 
     torch.save(user_known_concept_embeddings, "known_user_concept_embeddings.pt")
 
+    # unknown concepts
     # Create user embeddings tuple list (user id, user concept embedding)
     user_unknown_concept_embeddings = {user: [] for user in all_users}
     for uid in user_unknown_concept_dict.keys():
