@@ -23,28 +23,50 @@ train_df = train_data.drop(columns=["timestamp"])
 all_users = set(train_df["uid"])
 user_id_to_index = {uid: idx for idx, uid in enumerate(all_users)}
 
-# Model class
 class UserQuestionModel(nn.Module):
-    def __init__(self, num_users, user_emb_dim, question_emb_dim, concept_emb_dim, hidden_dim):
+    def __init__(self, num_users, user_emb_dim=1024, question_emb_dim=768, concept_emb_dim=768, hidden_dim=1024):
         super(UserQuestionModel, self).__init__()
+
+        # Learnable embedding for each user
         self.user_embedding = nn.Embedding(num_users, user_emb_dim)
-        self.fc1 = nn.Linear(user_emb_dim + question_emb_dim + concept_emb_dim, hidden_dim)
+
+        # Total input dimension = user + question + concept
+        input_dim = user_emb_dim + question_emb_dim + concept_emb_dim
+
+        # MLP layers
+        self.fc1 = nn.Linear(input_dim, hidden_dim)
         self.bn1 = nn.BatchNorm1d(hidden_dim)
-        self.dropout1 = nn.Dropout(0.3)
+        self.dropout1 = nn.Dropout(0.2)
+
         self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)
         self.bn2 = nn.BatchNorm1d(hidden_dim // 2)
         self.dropout2 = nn.Dropout(0.2)
-        self.fc3 = nn.Linear(hidden_dim // 2, 1)
+
+        self.fc3 = nn.Linear(hidden_dim // 2, hidden_dim // 4)
+        self.bn3 = nn.BatchNorm1d(hidden_dim // 4)
+        self.dropout3 = nn.Dropout(0.1)
+
+        self.fc4 = nn.Linear(hidden_dim // 4, 1)  # Binary classification logit
 
     def forward(self, user_ids, question_embeddings, concept_embeddings):
-        u_emb = self.user_embedding(user_ids)
+        # Lookup user embedding
+        u_emb = self.user_embedding(user_ids)  # (batch_size, user_emb_dim)
+
+        # Concatenate all inputs
         x = torch.cat([u_emb, question_embeddings, concept_embeddings], dim=1)
+
+        # Feed-forward through MLP
         x = F.relu(self.bn1(self.fc1(x)))
         x = self.dropout1(x)
+
         x = F.relu(self.bn2(self.fc2(x)))
         x = self.dropout2(x)
-        logits = self.fc3(x)
-        return logits.squeeze(1)
+
+        x = F.relu(self.bn3(self.fc3(x)))
+        x = self.dropout3(x)
+
+        logits = self.fc4(x)
+        return logits.squeeze(1)  # For BCEWithLogitsLoss
 
 # Initialize model
 question_dim = len(question_embeddings[0])

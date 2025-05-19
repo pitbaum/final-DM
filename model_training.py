@@ -41,37 +41,47 @@ concept_embeddings = torch.load("concept_embeddings.pt")
 class UserQuestionModel(nn.Module):
     def __init__(self, num_users, user_emb_dim, question_emb_dim, concept_emb_dim, hidden_dim):
         super(UserQuestionModel, self).__init__()
-        
+
         # Learnable embedding for each user
         self.user_embedding = nn.Embedding(num_users, user_emb_dim)
 
+        # Total input dimension = user + question + concept
         input_dim = user_emb_dim + question_emb_dim + concept_emb_dim
 
-        # MLP Layers
+        # MLP layers
         self.fc1 = nn.Linear(input_dim, hidden_dim)
         self.bn1 = nn.BatchNorm1d(hidden_dim)
-        self.dropout1 = nn.Dropout(0.3)
+        self.dropout1 = nn.Dropout(0.2)
 
         self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)
         self.bn2 = nn.BatchNorm1d(hidden_dim // 2)
         self.dropout2 = nn.Dropout(0.2)
 
-        self.fc3 = nn.Linear(hidden_dim // 2, 1)  # Logit output
+        self.fc3 = nn.Linear(hidden_dim // 2, hidden_dim // 4)
+        self.bn3 = nn.BatchNorm1d(hidden_dim // 4)
+        self.dropout3 = nn.Dropout(0.1)
+
+        self.fc4 = nn.Linear(hidden_dim // 4, 1)  # Binary classification logit
 
     def forward(self, user_ids, question_embeddings, concept_embeddings):
+        # Lookup user embedding
         u_emb = self.user_embedding(user_ids)  # (batch_size, user_emb_dim)
 
+        # Concatenate all inputs
         x = torch.cat([u_emb, question_embeddings, concept_embeddings], dim=1)
 
+        # Feed-forward through MLP
         x = F.relu(self.bn1(self.fc1(x)))
         x = self.dropout1(x)
 
         x = F.relu(self.bn2(self.fc2(x)))
         x = self.dropout2(x)
 
-        logits = self.fc3(x)  # Do not apply sigmoid here
-        return logits.squeeze(1)  # BCEWithLogitsLoss expects raw logits
+        x = F.relu(self.bn3(self.fc3(x)))
+        x = self.dropout3(x)
 
+        logits = self.fc4(x)
+        return logits.squeeze(1)  # For BCEWithLogitsLoss
 
 
 question_dim = len(question_embeddings[0])
@@ -83,17 +93,17 @@ user_id_to_index = {uid: idx for idx, uid in enumerate(all_users)}
 num_users = len(user_id_to_index)
 
 # Re-initialize model with corrected num_users
-model = UserQuestionModel(num_users=num_users, user_emb_dim=320,
+model = UserQuestionModel(num_users=num_users, user_emb_dim=1024//4,
                           question_emb_dim=question_dim,
                           concept_emb_dim=concept_dim,
-                          hidden_dim=128)
+                          hidden_dim=1024)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 criterion = nn.BCEWithLogitsLoss()
 model.train()
 
 BATCH_SIZE = 32
-epochs = 10
+epochs = 3
 
 for epoch in range(epochs):
     model.train()
@@ -102,6 +112,8 @@ for epoch in range(epochs):
     batch_uid = []
     batch_labels = []
 
+    epoch_loss = 0
+    batch_count = 0
     for i, row in tqdm(train_df.iterrows(), total=len(train_df), desc=f"Training Epoch {epoch+1}"):
         user_id = row["uid"]
         question_id = row["question_id"]
@@ -118,10 +130,9 @@ for epoch in range(epochs):
                 else:
                     concept_embedding = torch.zeros(concept_dim)
             except (KeyError, IndexError):
-                concept_embedding = torch.zeros(concept_dim)  # Concept ID not found
+                concept_embedding = torch.zeros(concept_dim)
         else:
             concept_embedding = torch.zeros(concept_dim)
-
 
         question_embedding = question_embeddings[question_id]
         label_tensor = torch.tensor([label], dtype=torch.float)
@@ -145,6 +156,11 @@ for epoch in range(epochs):
             loss.backward()
             optimizer.step()
 
+            # Track loss
+            epoch_loss += loss.item()
+            batch_count += 1
+
+            # Clear batch
             batch_concepts.clear()
             batch_questions.clear()
             batch_uid.clear()
@@ -163,5 +179,12 @@ for epoch in range(epochs):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+
+        # Track loss
+        epoch_loss += loss.item()
+        batch_count += 1
+
+    avg_loss = epoch_loss / batch_count if batch_count > 0 else 0
+    print(f"Epoch {epoch+1}/{epochs} - Average Loss: {avg_loss:.4f}")
 
 torch.save(model.state_dict(), "model_weights.pth")

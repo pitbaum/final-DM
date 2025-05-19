@@ -39,22 +39,29 @@ if not os.path.exists(os.getcwd()+"/question_embeddings.pt"):
     print("question embeddings dont exist yet, creating them")
     # Load the sentence transformer model
     
-    model = SentenceTransformer('shibing624/text2vec-bge-base-chinese') # Make sure to use a model that knows chinese
+    model = SentenceTransformer('shibing624/text2vec-base-chinese') 
     model.eval()
+
     questions_list = []
     for i in tqdm(range(len(questions))):
         question = questions[str(i)]
-        content = question["content"]
-        kc_routes = ""
-        for x in question["kc_routes"]:
-            kc_routes += x
-        answer = ""
-        for x in question["answer"]:
-            answer += x  # Fixed: use correct field instead of repeating kc_routes
-        analysis = question["analysis"]
-        q_type = question["type"]
-        # Combine all fields into a single string
-        questions_list.append(content + answer + analysis + q_type)
+
+        content = question.get("content", "")
+        kc_routes = " > ".join(question.get("kc_routes", []))
+        answer = "".join(question.get("answer", []))
+        analysis = question.get("analysis", "")
+        q_type = question.get("type", "")
+
+        # Combine into a structured Chinese prompt for embedding
+        full_text = (
+            f"题目类型: {q_type}题；"
+            f"知识点路径: {kc_routes}；"
+            f"题目内容: {content}；"
+            f"解析: {analysis}；"
+            f"答案: {answer}"
+        )
+
+        questions_list.append(full_text)
 
     batch_size = 32
     embeddings = []
@@ -75,6 +82,11 @@ if not os.path.exists(os.getcwd()+"/question_embeddings.pt"):
     question_embeddings = torch.cat(embeddings, dim=0)
     print("Finished creating question embeddings")
 
+    # Normalize question embeddings
+    question_mean = question_embeddings.mean(dim=0)
+    question_std = question_embeddings.std(dim=0) + 1e-6  # Avoid division by zero
+    question_embeddings = (question_embeddings - question_mean) / question_std
+
     torch.save(question_embeddings, "question_embeddings.pt")
     print("Saved to file")
 
@@ -86,7 +98,7 @@ else:
 """
 
 if not os.path.exists(os.getcwd()+"/concept_embeddings.pt"):
-    model = SentenceTransformer("shibing624/text2vec-bge-base-chinese") # Using a more state of the art model for embedding
+    model = SentenceTransformer("shibing624/text2vec-base-chinese") # Using a more state of the art model for embedding
     model.eval()
     concept_list = []
     for i in tqdm(range(len(concepts))):
@@ -111,6 +123,12 @@ if not os.path.exists(os.getcwd()+"/concept_embeddings.pt"):
     # Concatenate all embeddings
     concept_embeddings = torch.cat(embeddings, dim=0)
     print("Finished creating question embeddings")
+
+    # Normalize concept embeddings
+    concept_mean = concept_embeddings.mean(dim=0)
+    concept_std = concept_embeddings.std(dim=0) + 1e-6
+    concept_embeddings = (concept_embeddings - concept_mean) / concept_std
+
 
     torch.save(concept_embeddings, "concept_embeddings.pt")
     print("Saved to file")
