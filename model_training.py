@@ -4,9 +4,7 @@ from tqdm import tqdm
 import torch.nn.functional as F
 import torch.nn as nn
 from tqdm import tqdm
-from sklearn.model_selection import train_test_split
 import json
-
 
 """
     Load data
@@ -34,135 +32,136 @@ all_concepts = list(concepts.keys())
 
 question_embeddings = torch.load("question_embeddings.pt")
 
-user_known_embeddings = torch.load("known_user_embeddings.pt")
-user_unknown_embeddings = torch.load("unknown_user_embeddings.pt")
+concept_embeddings = torch.load("concept_embeddings.pt")
 
 """
     Define models
 """
 
-class RecommenderModel(nn.Module):
-    def __init__(self, input_dim):
-        super(RecommenderModel, self).__init__()
+class UserQuestionModel(nn.Module):
+    def __init__(self, num_users, user_emb_dim, question_emb_dim, concept_emb_dim, hidden_dim):
+        super(UserQuestionModel, self).__init__()
         
-        # First hidden layer (input size is 756 * 3)
-        self.fc1 = nn.Linear(input_dim, 2048)  # Increased size for larger input
-        self.bn1 = nn.BatchNorm1d(2048)
+        # Learnable embedding for each user
+        self.user_embedding = nn.Embedding(num_users, user_emb_dim)
+
+        input_dim = user_emb_dim + question_emb_dim + concept_emb_dim
+
+        # MLP Layers
+        self.fc1 = nn.Linear(input_dim, hidden_dim)
+        self.bn1 = nn.BatchNorm1d(hidden_dim)
         self.dropout1 = nn.Dropout(0.3)
 
-        # Second hidden layer
-        self.fc2 = nn.Linear(2048, 1024)
-        self.bn2 = nn.BatchNorm1d(1024)
-        self.dropout2 = nn.Dropout(0.3)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)
+        self.bn2 = nn.BatchNorm1d(hidden_dim // 2)
+        self.dropout2 = nn.Dropout(0.2)
 
-        # Third hidden layer
-        self.fc3 = nn.Linear(1024, 512)
-        self.bn3 = nn.BatchNorm1d(512)
-        self.dropout3 = nn.Dropout(0.2)
+        self.fc3 = nn.Linear(hidden_dim // 2, 1)  # Logit output
 
-        # Fourth hidden layer
-        self.fc4 = nn.Linear(512, 256)
-        self.bn4 = nn.BatchNorm1d(256)
-        self.dropout4 = nn.Dropout(0.2)
+    def forward(self, user_ids, question_embeddings, concept_embeddings):
+        u_emb = self.user_embedding(user_ids)  # (batch_size, user_emb_dim)
 
-        # Fifth hidden layer
-        self.fc5 = nn.Linear(256, 128)
+        x = torch.cat([u_emb, question_embeddings, concept_embeddings], dim=1)
 
-        # Final output layer
-        self.fc6 = nn.Linear(128, 1)  # For predicting binary interaction (click/no-click)
-
-    def forward(self, x):
-        # Pass through the first hidden layer
-        x = F.gelu(self.fc1(x))
-        x = self.bn1(x)
+        x = F.relu(self.bn1(self.fc1(x)))
         x = self.dropout1(x)
 
-        # Pass through the second hidden layer
-        x = F.gelu(self.fc2(x))
-        x = self.bn2(x)
+        x = F.relu(self.bn2(self.fc2(x)))
         x = self.dropout2(x)
 
-        # Pass through the third hidden layer
-        x = F.gelu(self.fc3(x))
-        x = self.bn3(x)
-        x = self.dropout3(x)
+        logits = self.fc3(x)  # Do not apply sigmoid here
+        return logits.squeeze(1)  # BCEWithLogitsLoss expects raw logits
 
-        # Pass through the fourth hidden layer
-        x = F.gelu(self.fc4(x))
-        x = self.bn4(x)
-        x = self.dropout4(x)
 
-        # Pass through the fifth hidden layer
-        x = F.gelu(self.fc5(x))
 
-        # Output layer for binary classification
-        x = self.fc6(x)
-        
-        return x  # Logit for BCEWithLogitsLoss
+question_dim = len(question_embeddings[0])
+concept_dim = len(concept_embeddings[0])
+# Model init being the concept embedding dimension and the question embedding
 
-linear = True
-"""# linear model training"""
-if linear:
+# Map user_id to index
+user_id_to_index = {uid: idx for idx, uid in enumerate(all_users)}
+num_users = len(user_id_to_index)
 
-    user_known_embeddings_length = len(user_known_embeddings[15027])
-    user_unknown_embeddings_length = len(user_unknown_embeddings[15027])
-    model = RecommenderModel(input_dim=user_known_embeddings_length + user_unknown_embeddings_length + len(question_embeddings[0]))
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
-    criterion = nn.BCEWithLogitsLoss()
+# Re-initialize model with corrected num_users
+model = UserQuestionModel(num_users=num_users, user_emb_dim=320,
+                          question_emb_dim=question_dim,
+                          concept_emb_dim=concept_dim,
+                          hidden_dim=128)
+
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+criterion = nn.BCEWithLogitsLoss()
+model.train()
+
+BATCH_SIZE = 32
+epochs = 10
+
+for epoch in range(epochs):
     model.train()
+    batch_concepts = []
+    batch_questions = []
+    batch_uid = []
+    batch_labels = []
 
-    BATCH_SIZE = 32
-    epochs = 10
+    for i, row in tqdm(train_df.iterrows(), total=len(train_df), desc=f"Training Epoch {epoch+1}"):
+        user_id = row["uid"]
+        question_id = row["question_id"]
+        concept_ids_str = row["concept_id"]  # e.g., "12_45"
+        label = row["response"]
 
-    for epoch in range(epochs):
-        model.train()
-        batch_inputs = []
-        batch_labels = []
+        # Parse and average concept embeddings
+        if isinstance(concept_ids_str, str) and concept_ids_str.strip():
+            try:
+                concept_ids = [int(cid) for cid in concept_ids_str.split("_") if cid.isdigit()]
+                if concept_ids:
+                    this_concept = [concept_embeddings[cid] for cid in concept_ids]
+                    concept_embedding = torch.mean(torch.stack(this_concept), dim=0)
+                else:
+                    concept_embedding = torch.zeros(concept_dim)
+            except (KeyError, IndexError):
+                concept_embedding = torch.zeros(concept_dim)  # Concept ID not found
+        else:
+            concept_embedding = torch.zeros(concept_dim)
 
-        for i, behavior in tqdm(train_df.iterrows(), total=len(train_df), desc=f"Training Epoch {epoch+1}"):
-            user_id = behavior["uid"]
-            question_id = behavior["question_id"]
 
-            if user_id not in user_known_embeddings.keys():
-                this_known_embedding = torch.zeros(user_known_embeddings_length, dtype=torch.float32)
-            if user_id not in user_unknown_embeddings.keys():
-                this_unknown_embedding = torch.zeros(user_unknown_embeddings_length, dtype=torch.float32)
-            if len(question_embeddings) < question_id:
-                continue
-            
-            this_known_embedding = user_known_embeddings[user_id]
-            this_unknown_embedding = user_unknown_embeddings[user_id]
-            this_question = question_embeddings[question_id]
-            input_tensor = torch.cat((this_known_embedding, this_unknown_embedding,this_question), dim=0)
-            label_tensor = torch.tensor([train_df["response"][i]], dtype=torch.float)
+        question_embedding = question_embeddings[question_id]
+        label_tensor = torch.tensor([label], dtype=torch.float)
+        user_index = torch.tensor(user_id_to_index[user_id], dtype=torch.long)
 
-            batch_inputs.append(input_tensor)
-            batch_labels.append(label_tensor)
+        batch_concepts.append(concept_embedding)
+        batch_questions.append(question_embedding)
+        batch_uid.append(user_index)
+        batch_labels.append(label_tensor)
 
-            if len(batch_inputs) == BATCH_SIZE:
-                input_batch = torch.stack(batch_inputs)
-                label_batch = torch.stack(batch_labels)
+        if len(batch_uid) == BATCH_SIZE:
+            in_batch_concepts = torch.stack(batch_concepts)
+            in_batch_questions = torch.stack(batch_questions)
+            in_batch_uid = torch.stack(batch_uid)
+            label_batch = torch.cat(batch_labels)
 
-                output = model(input_batch)
-                loss = criterion(output, label_batch)
-
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-
-                batch_inputs = []
-                batch_labels = []
-
-        # Process leftover batch after the full loop
-        if batch_inputs:
-            input_batch = torch.stack(batch_inputs)
-            label_batch = torch.stack(batch_labels)
-
-            output = model(input_batch)
+            output = model(in_batch_uid, in_batch_questions, in_batch_concepts)
             loss = criterion(output, label_batch)
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
-    torch.save(model.state_dict(), "model_weights.pth")
+            batch_concepts.clear()
+            batch_questions.clear()
+            batch_uid.clear()
+            batch_labels.clear()
+
+    # Process leftover batch
+    if batch_uid:
+        in_batch_concepts = torch.stack(batch_concepts)
+        in_batch_questions = torch.stack(batch_questions)
+        in_batch_uid = torch.stack(batch_uid)
+        label_batch = torch.cat(batch_labels)
+
+        output = model(in_batch_uid, in_batch_questions, in_batch_concepts)
+        loss = criterion(output, label_batch)
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+torch.save(model.state_dict(), "model_weights.pth")

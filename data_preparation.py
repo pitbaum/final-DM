@@ -39,7 +39,7 @@ if not os.path.exists(os.getcwd()+"/question_embeddings.pt"):
     print("question embeddings dont exist yet, creating them")
     # Load the sentence transformer model
     
-    model = SentenceTransformer('shibing624/text2vec-base-chinese') # Make sure to use a model that knows chinese
+    model = SentenceTransformer('shibing624/text2vec-bge-base-chinese') # Make sure to use a model that knows chinese
     model.eval()
     questions_list = []
     for i in tqdm(range(len(questions))):
@@ -80,62 +80,13 @@ if not os.path.exists(os.getcwd()+"/question_embeddings.pt"):
 
 else:
     question_embeddings = torch.load("question_embeddings.pt")
-
-
-"""
-    Generate a user question embedding
-"""
-
-if (not os.path.exists(os.getcwd() + "/known_user_question_embeddings.pt")) or (not os.path.exists(os.getcwd() + "/unknown_user_question_embeddings.pt")):
-    # Create a user_id key, list of known question ids dict
-    # And one for questions that were anwsered wrongly
-    user_known_question_dict = {user: [] for user in all_users}
-    user_unknown_question_dict = {user: [] for user in all_users}
-    for _, training_data in tqdm(train_df.iterrows(), total=len(train_df), desc="Create user embeddings"):
-        # Append the question to the known dict if the response was correct
-        if training_data["response"] == 1:
-            user_known_question_dict[training_data["uid"]].append(training_data["question_id"])
-        else:
-            user_unknown_question_dict[training_data["uid"]].append(training_data["question_id"])
-
-    # Create user embeddings tuple list (user id, user embedding)
-    user_known_embeddings = {user: [] for user in all_users}
-    for uid in user_known_question_dict.keys():
-        looked_up_question_embeddings = []
-        for question_id in user_known_question_dict[uid]:
-            looked_up_question_embeddings.append(question_embeddings[question_id])
-        if looked_up_question_embeddings == []:
-            user_embedding = torch.stack([torch.tensor(0.0) for _ in range(768)])
-        else:
-            user_embedding = torch.mean(torch.stack(looked_up_question_embeddings),dim=0)
-        user_known_embeddings[uid] = user_embedding
-
-    torch.save(user_known_embeddings, "known_user_question_embeddings.pt")
-
-    # Create user embedding for questions that were wrongly anwsered
-    user_unknown_embeddings = {user: [] for user in all_users}
-    for uid in user_unknown_question_dict.keys():
-        looked_up_question_embeddings = []
-        for question_id in user_unknown_question_dict[uid]:
-            looked_up_question_embeddings.append(question_embeddings[question_id])
-        if looked_up_question_embeddings == []:
-            user_embedding = torch.stack([torch.tensor(0.0) for _ in range(768)])
-        else:
-            user_embedding = torch.mean(torch.stack(looked_up_question_embeddings),dim=0)
-        user_unknown_embeddings[uid] = user_embedding
-
-    torch.save(user_unknown_embeddings, "unknown_user_question_embeddings.pt")
-
-else:
-    user_known_embeddings = torch.load("known_user_question_embeddings.pt")
-    user_unknown_embeddings = torch.load("unknown_user_question_embeddings.pt")
-
+    
 """
     Generate concept embeddings 
 """
 
 if not os.path.exists(os.getcwd()+"/concept_embeddings.pt"):
-    model = SentenceTransformer('shibing624/text2vec-base-chinese')
+    model = SentenceTransformer("shibing624/text2vec-bge-base-chinese") # Using a more state of the art model for embedding
     model.eval()
     concept_list = []
     for i in tqdm(range(len(concepts))):
@@ -167,57 +118,5 @@ if not os.path.exists(os.getcwd()+"/concept_embeddings.pt"):
 else:
     concept_embeddings = torch.load("concept_embeddings.pt")
     print("Read the concept embeddings from file")
-
-"""
-    Generate the user concept embeddings
-"""
-
-if (not os.path.exists(os.getcwd() + "/known_user_concept_embeddings.pt")) or (not os.path.exists(os.getcwd() + "/unknown_user_concept_embeddings.pt")):
-    # Create a user_id key, list of known concpet ids dict
-    # And One for concepts that were anwsered wrongly
-    user_known_concept_dict = {user: [] for user in all_users}
-    user_unknown_concept_dict = {user: [] for user in all_users}
-    for _, train_data in tqdm(train_df.iterrows(), total=len(train_df), desc="Create user concept"):
-        if train_data["response"] == 1:
-            user_known_concept_dict[train_data["uid"]].append(train_data["concept_id"])
-        else:
-            user_unknown_concept_dict[train_data["uid"]].append(train_data["concept_id"])
-    
-    # Kown concepts
-    # Create user embeddings tuple list (user id, user concept embedding)
-    user_known_concept_embeddings = {user: [] for user in all_users}
-    for uid in user_known_concept_dict.keys():
-        looked_up_concept_embeddings = []
-        for concept_id in user_known_concept_dict[uid]:
-            # split concept id by _ since sometimes several are registered at once
-            concept_ids = concept_id.split("_")
-            for x in concept_ids:
-                looked_up_concept_embeddings.append(concept_embeddings[int(x)])
-        if looked_up_concept_embeddings == []:
-            user_embedding = torch.stack([torch.tensor(0.0) for _ in range(768)])
-        else:
-            user_embedding = torch.mean(torch.stack(looked_up_concept_embeddings),dim=0)
-        user_known_concept_embeddings[uid] = user_embedding
-
-    torch.save(user_known_concept_embeddings, "known_user_concept_embeddings.pt")
-
-    # unknown concepts
-    # Create user embeddings tuple list (user id, user concept embedding)
-    user_unknown_concept_embeddings = {user: [] for user in all_users}
-    for uid in user_unknown_concept_dict.keys():
-        looked_up_concept_embeddings = []
-        for concept_id in user_known_concept_dict[uid]:
-            concept_ids = concept_id.split("_")
-            for x in concept_ids:
-                looked_up_concept_embeddings.append(concept_embeddings[int(x)])
-        if looked_up_concept_embeddings == []:
-            user_embedding = torch.stack([torch.tensor(0.0) for _ in range(768)])
-        else:
-            user_embedding = torch.mean(torch.stack(looked_up_concept_embeddings),dim=0)
-        user_unknown_concept_embeddings[uid] = user_embedding
-    torch.save(user_unknown_concept_embeddings, "unknown_user_concept_embeddings.pt")
-else:
-    user_unknown_concept_embeddings = torch.load("unkown_user_concept_embeddings.pt")
-    user_known_concept_embeddings = torch.load("known_user_concept_embeddings.pt")
 
 print("All prepared files should exist now, exiting program")
