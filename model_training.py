@@ -38,50 +38,35 @@ concept_embeddings = torch.load("concept_embeddings.pt")
     Define models
 """
 
-class UserQuestionModel(nn.Module):
+class TwoTowerModel(nn.Module):
     def __init__(self, num_users, user_emb_dim, question_emb_dim, concept_emb_dim, hidden_dim):
-        super(UserQuestionModel, self).__init__()
-
-        # Learnable embedding for each user
+        super().__init__()
         self.user_embedding = nn.Embedding(num_users, user_emb_dim)
+        self.user_mlp = nn.Sequential(
+            nn.Linear(user_emb_dim, hidden_dim // 2),
+            nn.ReLU()
+        )
 
-        # Total input dimension = user + question + concept
-        input_dim = user_emb_dim + question_emb_dim + concept_emb_dim
+        self.content_mlp = nn.Sequential(
+            nn.Linear(question_emb_dim + concept_emb_dim, hidden_dim // 2),
+            nn.ReLU()
+        )
 
-        # MLP layers
-        self.fc1 = nn.Linear(input_dim, hidden_dim)
-        self.bn1 = nn.BatchNorm1d(hidden_dim)
-        self.dropout1 = nn.Dropout(0.2)
-
-        self.fc2 = nn.Linear(hidden_dim, hidden_dim // 2)
-        self.bn2 = nn.BatchNorm1d(hidden_dim // 2)
-        self.dropout2 = nn.Dropout(0.2)
-
-        self.fc3 = nn.Linear(hidden_dim // 2, hidden_dim // 4)
-        self.bn3 = nn.BatchNorm1d(hidden_dim // 4)
-        self.dropout3 = nn.Dropout(0.1)
-
-        self.fc4 = nn.Linear(hidden_dim // 4, 1)  # Binary classification logit
+        self.output_layer = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(hidden_dim // 2, 1)
+        )
 
     def forward(self, user_ids, question_embeddings, concept_embeddings):
-        # Lookup user embedding
-        u_emb = self.user_embedding(user_ids)  # (batch_size, user_emb_dim)
+        u_emb = self.user_embedding(user_ids)
+        user_vec = self.user_mlp(u_emb)
 
-        # Concatenate all inputs
-        x = torch.cat([u_emb, question_embeddings, concept_embeddings], dim=1)
+        content_vec = self.content_mlp(torch.cat([question_embeddings, concept_embeddings], dim=1))
 
-        # Feed-forward through MLP
-        x = F.relu(self.bn1(self.fc1(x)))
-        x = self.dropout1(x)
-
-        x = F.relu(self.bn2(self.fc2(x)))
-        x = self.dropout2(x)
-
-        x = F.relu(self.bn3(self.fc3(x)))
-        x = self.dropout3(x)
-
-        logits = self.fc4(x)
-        return logits.squeeze(1)  # For BCEWithLogitsLoss
+        combined = torch.cat([user_vec, content_vec], dim=1)
+        return self.output_layer(combined).squeeze(1)
 
 
 question_dim = len(question_embeddings[0])
@@ -92,18 +77,20 @@ concept_dim = len(concept_embeddings[0])
 user_id_to_index = {uid: idx for idx, uid in enumerate(all_users)}
 num_users = len(user_id_to_index)
 
-# Re-initialize model with corrected num_users
-model = UserQuestionModel(num_users=num_users, user_emb_dim=1024//4,
-                          question_emb_dim=question_dim,
-                          concept_emb_dim=concept_dim,
-                          hidden_dim=1024)
+model = TwoTowerModel(
+    num_users=num_users,
+    user_emb_dim=256,
+    question_emb_dim=question_dim,
+    concept_emb_dim=concept_dim,
+    hidden_dim=512  # or 1024 depending on your needs
+)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 criterion = nn.BCEWithLogitsLoss()
 model.train()
 
 BATCH_SIZE = 32
-epochs = 3
+epochs = 10
 
 for epoch in range(epochs):
     model.train()
