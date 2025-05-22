@@ -27,44 +27,47 @@ class TwoTowerModel(nn.Module):
     def __init__(self, num_users, user_emb_dim, question_emb_dim, concept_emb_dim, hidden_dim):
         super().__init__()
         self.user_embedding = nn.Embedding(num_users, user_emb_dim)
+
+        # User tower
         self.user_mlp = nn.Sequential(
             nn.Linear(user_emb_dim, hidden_dim // 2),
             nn.ReLU()
         )
 
+        # Content tower
         self.content_mlp = nn.Sequential(
             nn.Linear(question_emb_dim + concept_emb_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(hidden_dim // 2, hidden_dim // 4),
             nn.ReLU()
         )
 
+        # Combined input dimension = (hidden_dim // 2) + (hidden_dim // 4) = 3 * hidden_dim // 4
+        combined_dim = 3 * hidden_dim // 4
+
         self.output_layer = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.Linear(combined_dim, hidden_dim // 2),
             nn.ReLU(),
             nn.Dropout(0.2),
-            nn.Linear(hidden_dim // 2, 1)
+            nn.Linear(hidden_dim // 2, hidden_dim // 4),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(hidden_dim // 4, 1)
         )
 
     def forward(self, user_ids, question_embeddings, concept_embeddings):
         u_emb = self.user_embedding(user_ids)
-        user_vec = self.user_mlp(u_emb)
-
-        content_vec = self.content_mlp(torch.cat([question_embeddings, concept_embeddings], dim=1))
-
-        combined = torch.cat([user_vec, content_vec], dim=1)
-        return self.output_layer(combined).squeeze(1)
-
-    def forward(self, user_ids, question_embeddings, concept_embeddings):
-        u_emb = self.user_embedding(user_ids)  # (B, user_emb_dim)
-        user_vec = self.user_mlp(u_emb)        # (B, hidden_dim // 2)
+        user_vec = self.user_mlp(u_emb)  # (batch_size, hidden_dim // 2)
 
         content_input = torch.cat([question_embeddings, concept_embeddings], dim=1)
-        content_vec = self.content_mlp(content_input)  # (B, hidden_dim // 2)
+        content_vec = self.content_mlp(content_input)  # (batch_size, hidden_dim // 4)
 
-        # Combine user and content representations
-        combined = torch.cat([user_vec, content_vec], dim=1)  # (B, hidden_dim)
+        combined = torch.cat([user_vec, content_vec], dim=1)  # (batch_size, 3 * hidden_dim // 4)
 
-        logits = self.output_layer(combined)
-        return logits.squeeze(1)  # for BCEWithLogitsLoss
+        return self.output_layer(combined).squeeze(1)
+
+
 
 # Initialize model
 question_dim = len(question_embeddings[0])
@@ -73,7 +76,7 @@ num_users = len(user_id_to_index)
 model = TwoTowerModel(num_users=num_users, user_emb_dim=256,
                           question_emb_dim=question_dim,
                           concept_emb_dim=concept_dim,
-                          hidden_dim=512)
+                          hidden_dim=1024)
 model.load_state_dict(torch.load("model_weights.pth"))
 model.eval()
 

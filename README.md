@@ -13,3 +13,6 @@ Those can then later be fed into some neural network to evaluate if a user will 
     -- A encoding layer that takes the user_id and learns a user encoding during the training step
     -- A concept encoding layer that takes the user_id and learns a user encoding during the trainig step
     -- Additional feed forward neural network layers with Dropout and binary output, that processes the user question and concept encodings in comparison to the question asked
+
+
+- For easier training and testing pipeline, the whole workload has been put into the one_file_run.py

@@ -4,7 +4,6 @@ from tqdm import tqdm
 from sentence_transformers import SentenceTransformer
 import torch
 import os
-import torch.nn.functional as F
 
 """
     Load data

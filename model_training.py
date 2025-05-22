@@ -42,47 +42,64 @@ class TwoTowerModel(nn.Module):
     def __init__(self, num_users, user_emb_dim, question_emb_dim, concept_emb_dim, hidden_dim):
         super().__init__()
         self.user_embedding = nn.Embedding(num_users, user_emb_dim)
+
+        # User tower
         self.user_mlp = nn.Sequential(
             nn.Linear(user_emb_dim, hidden_dim // 2),
+            nn.ReLU(),
+           # nn.Dropout(0.2),
+            nn.Linear(hidden_dim // 2, hidden_dim // 4),
             nn.ReLU()
         )
 
+        # Content tower
         self.content_mlp = nn.Sequential(
             nn.Linear(question_emb_dim + concept_emb_dim, hidden_dim // 2),
+            nn.ReLU(),
+            #nn.Dropout(0.2),
+            nn.Linear(hidden_dim // 2, hidden_dim // 4),
             nn.ReLU()
         )
 
+        # Combined input dimension = (user tower output) + (content tower output) = hidden_dim // 2
+        combined_dim = hidden_dim // 2
+
         self.output_layer = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.Linear(combined_dim, hidden_dim // 2),
             nn.ReLU(),
             nn.Dropout(0.2),
-            nn.Linear(hidden_dim // 2, 1)
+            nn.Linear(hidden_dim // 2, hidden_dim // 4),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(hidden_dim // 4, 1)
         )
 
     def forward(self, user_ids, question_embeddings, concept_embeddings):
         u_emb = self.user_embedding(user_ids)
-        user_vec = self.user_mlp(u_emb)
+        user_vec = self.user_mlp(u_emb)  # (batch_size, hidden_dim // 4)
 
-        content_vec = self.content_mlp(torch.cat([question_embeddings, concept_embeddings], dim=1))
+        content_input = torch.cat([question_embeddings, concept_embeddings], dim=1)
+        content_vec = self.content_mlp(content_input)  # (batch_size, hidden_dim // 4)
 
-        combined = torch.cat([user_vec, content_vec], dim=1)
+        combined = torch.cat([user_vec, content_vec], dim=1)  # (batch_size, hidden_dim // 2)
+
         return self.output_layer(combined).squeeze(1)
 
-
+# Dimensions from embedding data
 question_dim = len(question_embeddings[0])
 concept_dim = len(concept_embeddings[0])
-# Model init being the concept embedding dimension and the question embedding
 
 # Map user_id to index
 user_id_to_index = {uid: idx for idx, uid in enumerate(all_users)}
 num_users = len(user_id_to_index)
 
+# Initialize model
 model = TwoTowerModel(
     num_users=num_users,
-    user_emb_dim=256,
+    user_emb_dim=512,
     question_emb_dim=question_dim,
     concept_emb_dim=concept_dim,
-    hidden_dim=512  # or 1024 depending on your needs
+    hidden_dim=512
 )
 
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
@@ -90,7 +107,7 @@ criterion = nn.BCEWithLogitsLoss()
 model.train()
 
 BATCH_SIZE = 32
-epochs = 10
+epochs = 30
 
 for epoch in range(epochs):
     model.train()
@@ -99,9 +116,11 @@ for epoch in range(epochs):
     batch_uid = []
     batch_labels = []
 
+    # Shuffle the training data at the start of each epoch
+    shuffled_df = train_df.sample(frac=1).reset_index(drop=True)
     epoch_loss = 0
     batch_count = 0
-    for i, row in tqdm(train_df.iterrows(), total=len(train_df), desc=f"Training Epoch {epoch+1}"):
+    for i, row in tqdm(shuffled_df.iterrows(), total=len(shuffled_df), desc=f"Training Epoch {epoch+1}"):
         user_id = row["uid"]
         question_id = row["question_id"]
         concept_ids_str = row["concept_id"]  # e.g., "12_45"
