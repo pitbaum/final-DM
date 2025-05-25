@@ -16,3 +16,6 @@ Those can then later be fed into some neural network to evaluate if a user will 
 
 
 - For easier training and testing pipeline, the whole workload has been put into the one_file_run.py
+
+Report Link (WIP)
+https://docs.google.com/document/d/191LyYo-p80vasWuxCMtK70bJHh5C_9CGdrVog26R7-0/edit?usp=sharing

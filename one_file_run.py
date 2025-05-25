@@ -190,33 +190,36 @@ class TwoTowerModel(nn.Module):
 
         # User tower
         self.user_mlp = nn.Sequential(
-            nn.Linear(user_emb_dim, hidden_dim // 2),
+            nn.Linear(user_emb_dim, hidden_dim),
             nn.ReLU(),
-           # nn.Dropout(0.2),
-            nn.Linear(hidden_dim // 2, hidden_dim // 4),
-            nn.ReLU()
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(0.1),
         )
 
         # Content tower
         self.content_mlp = nn.Sequential(
-            nn.Linear(question_emb_dim + concept_emb_dim, hidden_dim // 2),
+            nn.Linear(question_emb_dim + concept_emb_dim, hidden_dim),
             nn.ReLU(),
-            #nn.Dropout(0.2),
-            nn.Linear(hidden_dim // 2, hidden_dim // 4),
-            nn.ReLU()
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(0.1),
         )
 
         # Combined input dimension = (user tower output) + (content tower output) = hidden_dim // 2
-        combined_dim = hidden_dim // 2
+        combined_dim = hidden_dim
+
 
         self.output_layer = nn.Sequential(
-            nn.Linear(combined_dim, hidden_dim // 2),
+            nn.Linear(combined_dim, hidden_dim),        
             nn.ReLU(),
             nn.Dropout(0.2),
-            nn.Linear(hidden_dim // 2, hidden_dim // 4),
+            nn.Linear(hidden_dim, hidden_dim // 2),
             nn.ReLU(),
             nn.Dropout(0.2),
-            nn.Linear(hidden_dim // 4, 1)
+            nn.Linear(hidden_dim // 2, 1),            # final output
         )
 
     def forward(self, user_ids, question_embeddings, concept_embeddings):
@@ -241,7 +244,7 @@ num_users = len(user_id_to_index)
 # Initialize model
 model = TwoTowerModel(
     num_users=num_users,
-    user_emb_dim=512,
+    user_emb_dim=512+256,
     question_emb_dim=question_dim,
     concept_emb_dim=concept_dim,
     hidden_dim=512
@@ -251,8 +254,8 @@ optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 criterion = nn.BCEWithLogitsLoss()
 model.train()
 
-BATCH_SIZE = 32
-epochs = 30
+BATCH_SIZE = 64
+epochs = 20
 
 for epoch in range(epochs):
     model.train()
