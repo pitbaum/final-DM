@@ -156,12 +156,15 @@ print("All prepared files should exist now, exiting program")
 
 
 #Load the training data from the file
-train_data = pd.read_csv("data/train.csv")
-# Drop useless columns from the data provided
-train_df = train_data.drop(columns=["timestamp"])
-del train_data #Clean memory
+train_df = pd.read_csv("data/train.csv")
+test_data = pd.read_csv("data/test.csv")
 
-test_data = pd.read_csv("data/test.csv").drop(columns=["timestamp"])
+all_timestamps = pd.concat([train_df["timestamp"], test_data["timestamp"]])
+mean = all_timestamps.mean()
+std = all_timestamps.std()
+
+train_df["timestamp_norm"] = (train_df["timestamp"] - mean) / std
+test_data["timestamp_norm"] = (test_data["timestamp"] - mean) / std
 
 with open("data/questions.json", 'r') as f:
     questions = json.load(f)
@@ -190,22 +193,22 @@ class TwoTowerModel(nn.Module):
 
         # User tower
         self.user_mlp = nn.Sequential(
-            nn.Linear(user_emb_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(0.1),
+            nn.Linear(user_emb_dim + 1, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(0.2),
             nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Dropout(0.1),
+            nn.GELU(),
+            nn.Dropout(0.2),
         )
 
         # Content tower
         self.content_mlp = nn.Sequential(
-            nn.Linear(question_emb_dim + concept_emb_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(0.1),
+            nn.Linear(question_emb_dim + concept_emb_dim + 1, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(0.2),
             nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Dropout(0.1),
+            nn.GELU(),
+            nn.Dropout(0.2),
         )
 
         # Combined input dimension = (user tower output) + (content tower output) = hidden_dim // 2
@@ -214,19 +217,20 @@ class TwoTowerModel(nn.Module):
 
         self.output_layer = nn.Sequential(
             nn.Linear(combined_dim, hidden_dim),        
-            nn.ReLU(),
+            nn.GELU(),
             nn.Dropout(0.2),
             nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Dropout(0.2),
             nn.Linear(hidden_dim // 2, 1),            # final output
         )
 
-    def forward(self, user_ids, question_embeddings, concept_embeddings):
+    def forward(self, user_ids, question_embeddings, concept_embeddings, timestamp):
         u_emb = self.user_embedding(user_ids)
-        user_vec = self.user_mlp(u_emb)  # (batch_size, hidden_dim // 4)
+        timestamp = timestamp.unsqueeze(1)  # Ensure timestamp is a column vector
+        user_vec = self.user_mlp(torch.cat([u_emb, timestamp], dim=1))  # (batch_size, hidden_dim // 4)
 
-        content_input = torch.cat([question_embeddings, concept_embeddings], dim=1)
+        content_input = torch.cat([question_embeddings, concept_embeddings, timestamp], dim=1)
         content_vec = self.content_mlp(content_input)  # (batch_size, hidden_dim // 4)
 
         combined = torch.cat([user_vec, content_vec], dim=1)  # (batch_size, hidden_dim // 2)
@@ -254,7 +258,7 @@ optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 criterion = nn.BCEWithLogitsLoss()
 model.train()
 
-BATCH_SIZE = 64
+BATCH_SIZE = 32
 epochs = 20
 
 for epoch in range(epochs):
@@ -263,6 +267,7 @@ for epoch in range(epochs):
     batch_questions = []
     batch_uid = []
     batch_labels = []
+    batch_timestamp = []
 
     # Shuffle the training data at the start of each epoch
     shuffled_df = train_df.sample(frac=1).reset_index(drop=True)
@@ -273,6 +278,7 @@ for epoch in range(epochs):
         question_id = row["question_id"]
         concept_ids_str = row["concept_id"]  # e.g., "12_45"
         label = row["response"]
+        timestamp = float(row["timestamp_norm"])
 
         # Parse and average concept embeddings
         if isinstance(concept_ids_str, str) and concept_ids_str.strip():
@@ -296,14 +302,16 @@ for epoch in range(epochs):
         batch_questions.append(question_embedding)
         batch_uid.append(user_index)
         batch_labels.append(label_tensor)
+        batch_timestamp.append(torch.tensor(timestamp,dtype=torch.float)) 
 
         if len(batch_uid) == BATCH_SIZE:
             in_batch_concepts = torch.stack(batch_concepts)
             in_batch_questions = torch.stack(batch_questions)
             in_batch_uid = torch.stack(batch_uid)
             label_batch = torch.cat(batch_labels)
+            in_batch_timestamp = torch.stack(batch_timestamp)
 
-            output = model(in_batch_uid, in_batch_questions, in_batch_concepts)
+            output = model(in_batch_uid, in_batch_questions, in_batch_concepts,in_batch_timestamp)
             loss = criterion(output, label_batch)
 
             optimizer.zero_grad()
@@ -319,6 +327,7 @@ for epoch in range(epochs):
             batch_questions.clear()
             batch_uid.clear()
             batch_labels.clear()
+            batch_timestamp.clear()
 
     # Process leftover batch
     if batch_uid:
@@ -326,8 +335,9 @@ for epoch in range(epochs):
         in_batch_questions = torch.stack(batch_questions)
         in_batch_uid = torch.stack(batch_uid)
         label_batch = torch.cat(batch_labels)
+        in_batch_timestamp = torch.stack(batch_timestamp)
 
-        output = model(in_batch_uid, in_batch_questions, in_batch_concepts)
+        output = model(in_batch_uid, in_batch_questions, in_batch_concepts, in_batch_timestamp)
         loss = criterion(output, label_batch)
 
         optimizer.zero_grad()
@@ -351,7 +361,7 @@ torch.save(model.state_dict(), "model_weights.pth")
 """
 
 # Load data
-test_df = pd.read_csv("data/test.csv").drop(columns=["timestamp"])
+test_df = test_data
 
 with open("data/questions.json", 'r') as f:
     questions = json.load(f)
@@ -361,13 +371,7 @@ with open("data/concept.json", 'r') as f:
 
 question_embeddings = torch.load("question_embeddings.pt")
 concept_embeddings = torch.load("concept_embeddings.pt")
-
-# Load training data to get user ID mapping
-train_data = pd.read_csv("data/train.csv")
-train_df = train_data.drop(columns=["timestamp"])
-all_users = set(train_df["uid"])
-user_id_to_index = {uid: idx for idx, uid in enumerate(all_users)}
-
+model.load_state_dict(torch.load("model_weights.pth"))
 model.eval()
 
 # Prediction loop
@@ -376,6 +380,7 @@ for i, row in tqdm(test_df.iterrows(), total=len(test_df), desc="Predicting"):
     user_id = row["uid"]
     question_id = row["question_id"]
     concept_ids_str = row["concept_id"]
+    timestamp = torch.tensor([row["timestamp_norm"]],dtype=torch.float)
 
     if user_id not in user_id_to_index:
         continue  # skip unknown users
@@ -399,7 +404,7 @@ for i, row in tqdm(test_df.iterrows(), total=len(test_df), desc="Predicting"):
     concept_embedding = concept_embedding.unsqueeze(0)
 
     with torch.no_grad():
-        output = model(user_index, question_embedding, concept_embedding)
+        output = model(user_index, question_embedding, concept_embedding, timestamp)
         probability = torch.sigmoid(output).item()
 
     results.append((user_id, probability))
