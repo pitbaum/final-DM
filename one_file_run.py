@@ -159,12 +159,8 @@ print("All prepared files should exist now, exiting program")
 train_df = pd.read_csv("data/train.csv")
 test_data = pd.read_csv("data/test.csv")
 
-all_timestamps = pd.concat([train_df["timestamp"], test_data["timestamp"]])
-mean = all_timestamps.mean()
-std = all_timestamps.std()
-
-train_df["timestamp_norm"] = (train_df["timestamp"] - mean) / std
-test_data["timestamp_norm"] = (test_data["timestamp"] - mean) / std
+train_df["timestamp_norm"] = (train_df["timestamp"] - train_df["timestamp"].mean()) / test_data["timestamp"].std()
+test_data["timestamp_norm"] = (test_data["timestamp"] - test_data["timestamp"].mean()) / test_data["timestamp"].std()
 
 with open("data/questions.json", 'r') as f:
     questions = json.load(f)
@@ -193,7 +189,7 @@ class TwoTowerModel(nn.Module):
 
         # User tower
         self.user_mlp = nn.Sequential(
-            nn.Linear(user_emb_dim + 1, hidden_dim),
+            nn.Linear(user_emb_dim, hidden_dim),
             nn.GELU(),
             nn.Dropout(0.2),
             nn.Linear(hidden_dim, hidden_dim // 2),
@@ -203,7 +199,7 @@ class TwoTowerModel(nn.Module):
 
         # Content tower
         self.content_mlp = nn.Sequential(
-            nn.Linear(question_emb_dim + concept_emb_dim + 1, hidden_dim),
+            nn.Linear(question_emb_dim + concept_emb_dim, hidden_dim),
             nn.GELU(),
             nn.Dropout(0.2),
             nn.Linear(hidden_dim, hidden_dim // 2),
@@ -211,9 +207,8 @@ class TwoTowerModel(nn.Module):
             nn.Dropout(0.2),
         )
 
-        # Combined input dimension = (user tower output) + (content tower output) = hidden_dim // 2
-        combined_dim = hidden_dim
-
+        # Combined = (user tower output) + (content tower output)
+        combined_dim = hidden_dim  # Because each tower outputs hidden_dim // 2
 
         self.output_layer = nn.Sequential(
             nn.Linear(combined_dim, hidden_dim),        
@@ -222,20 +217,23 @@ class TwoTowerModel(nn.Module):
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.GELU(),
             nn.Dropout(0.2),
-            nn.Linear(hidden_dim // 2, 1),            # final output
+            nn.Linear(hidden_dim // 2, 1),
         )
 
     def forward(self, user_ids, question_embeddings, concept_embeddings, timestamp):
-        u_emb = self.user_embedding(user_ids)
-        timestamp = timestamp.unsqueeze(1)  # Ensure timestamp is a column vector
-        user_vec = self.user_mlp(torch.cat([u_emb, timestamp], dim=1))  # (batch_size, hidden_dim // 4)
+        u_emb = self.user_embedding(user_ids)                        # (batch_size, user_emb_dim)
 
-        content_input = torch.cat([question_embeddings, concept_embeddings, timestamp], dim=1)
-        content_vec = self.content_mlp(content_input)  # (batch_size, hidden_dim // 4)
+        # User tower
+        user_input = u_emb       # (batch_size, user_emb_dim + 16)
+        user_vec = self.user_mlp(user_input)                        # (batch_size, hidden_dim // 2)
 
-        combined = torch.cat([user_vec, content_vec], dim=1)  # (batch_size, hidden_dim // 2)
+        # Content tower
+        content_input = torch.cat([question_embeddings, concept_embeddings], dim=1)
+        content_vec = self.content_mlp(content_input)               # (batch_size, hidden_dim // 2)
 
-        return self.output_layer(combined).squeeze(1)
+        combined = torch.cat([user_vec, content_vec], dim=1)        # (batch_size, hidden_dim)
+
+        return self.output_layer(combined).squeeze(1)               # (batch_size,)
 
 # Dimensions from embedding data
 question_dim = len(question_embeddings[0])
@@ -257,9 +255,12 @@ model = TwoTowerModel(
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
 criterion = nn.BCEWithLogitsLoss()
 model.train()
+criterion = nn.BCEWithLogitsLoss(reduction='none')
 
-BATCH_SIZE = 32
-epochs = 20
+alpha = 0.2  # exponential decay rate
+
+BATCH_SIZE = 64
+epochs = 10
 
 for epoch in range(epochs):
     model.train()
@@ -269,18 +270,18 @@ for epoch in range(epochs):
     batch_labels = []
     batch_timestamp = []
 
-    # Shuffle the training data at the start of each epoch
     shuffled_df = train_df.sample(frac=1).reset_index(drop=True)
     epoch_loss = 0
     batch_count = 0
+
     for i, row in tqdm(shuffled_df.iterrows(), total=len(shuffled_df), desc=f"Training Epoch {epoch+1}"):
+
         user_id = row["uid"]
         question_id = row["question_id"]
-        concept_ids_str = row["concept_id"]  # e.g., "12_45"
+        concept_ids_str = row["concept_id"]
         label = row["response"]
         timestamp = float(row["timestamp_norm"])
 
-        # Parse and average concept embeddings
         if isinstance(concept_ids_str, str) and concept_ids_str.strip():
             try:
                 concept_ids = [int(cid) for cid in concept_ids_str.split("_") if cid.isdigit()]
@@ -302,18 +303,33 @@ for epoch in range(epochs):
         batch_questions.append(question_embedding)
         batch_uid.append(user_index)
         batch_labels.append(label_tensor)
-        batch_timestamp.append(torch.tensor(timestamp,dtype=torch.float)) 
+        batch_timestamp.append(torch.tensor(timestamp, dtype=torch.float))
 
+        # --- When batch is full ---
         if len(batch_uid) == BATCH_SIZE:
             in_batch_concepts = torch.stack(batch_concepts)
             in_batch_questions = torch.stack(batch_questions)
             in_batch_uid = torch.stack(batch_uid)
             label_batch = torch.cat(batch_labels)
-            in_batch_timestamp = torch.stack(batch_timestamp)
+            in_batch_timestamp = torch.stack(batch_timestamp).unsqueeze(1)
 
-            output = model(in_batch_uid, in_batch_questions, in_batch_concepts,in_batch_timestamp)
-            loss = criterion(output, label_batch)
+            # Forward pass
+            output = model(in_batch_uid, in_batch_questions, in_batch_concepts, in_batch_timestamp)
 
+            # Per-sample loss (shape: [batch_size])
+            losses = criterion(output, label_batch)
+
+            # Calculate recency weights based on timestamp (exponential decay)
+            timestamps = in_batch_timestamp.squeeze(1)  # (batch_size,)
+            recency_weights = torch.exp(-alpha * (1 - timestamps))
+
+            # Apply weights to losses
+            weighted_losses = losses * recency_weights
+
+            # Average weighted loss
+            loss = weighted_losses.mean()
+
+            # Backprop and optimize
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -329,22 +345,26 @@ for epoch in range(epochs):
             batch_labels.clear()
             batch_timestamp.clear()
 
-    # Process leftover batch
+    # --- Process leftover batch ---
     if batch_uid:
         in_batch_concepts = torch.stack(batch_concepts)
         in_batch_questions = torch.stack(batch_questions)
         in_batch_uid = torch.stack(batch_uid)
         label_batch = torch.cat(batch_labels)
-        in_batch_timestamp = torch.stack(batch_timestamp)
+        in_batch_timestamp = torch.stack(batch_timestamp).unsqueeze(1)
 
         output = model(in_batch_uid, in_batch_questions, in_batch_concepts, in_batch_timestamp)
-        loss = criterion(output, label_batch)
+
+        losses = criterion(output, label_batch)
+        timestamps = in_batch_timestamp.squeeze(1)
+        recency_weights = torch.exp(-alpha * (1 - timestamps))
+        weighted_losses = losses * recency_weights
+        loss = weighted_losses.mean()
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-        # Track loss
         epoch_loss += loss.item()
         batch_count += 1
 
@@ -352,7 +372,6 @@ for epoch in range(epochs):
     print(f"Epoch {epoch+1}/{epochs} - Average Loss: {avg_loss:.4f}")
 
 torch.save(model.state_dict(), "model_weights.pth")
-
 
 """
     ######################################
